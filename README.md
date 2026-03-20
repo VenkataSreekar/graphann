@@ -44,6 +44,9 @@ graphann/
 │   ├── io_utils.h              # fbin/ibin file loaders
 │   ├── timer.h                 # Simple chrono-based timer
 │   └── vamana_index.h          # VamanaIndex class declaration
+├── scripts/
+│   ├── convert_vecs.py         # Convert fvecs/ivecs → fbin/ibin
+│   └── run_sift1m.sh           # One-command SIFT1M download, build & search
 └── src/
     ├── distance.cpp            # Distance implementation
     ├── io_utils.cpp            # File I/O implementation
@@ -69,6 +72,25 @@ make -j
 ```
 
 This produces two executables: `build_index` and `search_index`.
+
+---
+
+## Quick Start — SIFT1M end-to-end
+
+A single script downloads the [SIFT1M](http://corpus-texmex.irisa.fr/) dataset, converts it to binary format, builds a Vamana index, and runs search with recall evaluation:
+
+```bash
+./scripts/run_sift1m.sh
+```
+
+This will:
+1. Build the project (cmake + make)
+2. Download SIFT1M (1M base vectors, 10K queries, ground truth) into `tmp/sift/`
+3. Convert `.fvecs`/`.ivecs` files to `.fbin`/`.ibin` format in `tmp/`
+4. Build a Vamana index with default parameters (R=32, L=75, α=1.2, γ=1.5)
+5. Run search at multiple `L` values and report recall@10, latency, and distance computations
+
+Requires: `curl`, `python3` with `numpy`, and a C++17 compiler with OpenMP.
 
 ---
 
