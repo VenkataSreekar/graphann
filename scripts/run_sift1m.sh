@@ -24,7 +24,7 @@ echo "=== Step 1: Building the project ==="
 mkdir -p "$BUILD_DIR"
 pushd "$BUILD_DIR" > /dev/null
 cmake .. -DCMAKE_BUILD_TYPE=Release
-make -j"$(nproc)"
+cmake --build . --parallel
 popd > /dev/null
 echo ""
 

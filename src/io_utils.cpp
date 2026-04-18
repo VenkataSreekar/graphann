@@ -6,9 +6,17 @@
 
 // Allocates 64-byte-aligned memory (SIMD friendly).
 static void* aligned_alloc_wrapper(size_t size) {
-    // Round up to multiple of 64 for aligned_alloc requirement
+    // Round up to multiple of 64
     size_t aligned_size = (size + 63) & ~(size_t)63;
+    
+#ifdef _WIN32
+    // Windows / MinGW
+    void* ptr = _aligned_malloc(aligned_size, 64);
+#else
+    // Linux / Mac
     void* ptr = std::aligned_alloc(64, aligned_size);
+#endif
+
     if (!ptr)
         throw std::runtime_error("Failed to allocate " + std::to_string(size) + " bytes");
     return ptr;
@@ -41,8 +49,8 @@ FloatMatrix load_fbin(const std::string& path) {
     FloatMatrix mat;
     mat.npts = npts;
     mat.dims = dims;
-    mat.data = std::unique_ptr<float[], void(*)(void*)>(
-        static_cast<float*>(aligned_alloc_wrapper(data_size)), std::free);
+    mat.data = std::unique_ptr<float[], AlignedFree>(
+        static_cast<float*>(aligned_alloc_wrapper(data_size)));
 
     in.read(reinterpret_cast<char*>(mat.data.get()), data_size);
     if (!in.good())
@@ -77,8 +85,8 @@ IntMatrix load_ibin(const std::string& path) {
     IntMatrix mat;
     mat.npts = npts;
     mat.dims = dims;
-    mat.data = std::unique_ptr<uint32_t[], void(*)(void*)>(
-        static_cast<uint32_t*>(aligned_alloc_wrapper(data_size)), std::free);
+    mat.data = std::unique_ptr<uint32_t[], AlignedFree>(
+        static_cast<uint32_t*>(aligned_alloc_wrapper(data_size)));
 
     in.read(reinterpret_cast<char*>(mat.data.get()), data_size);
     if (!in.good())
