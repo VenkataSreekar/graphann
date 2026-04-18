@@ -151,6 +151,49 @@ void VamanaIndex::robust_prune(uint32_t node, std::vector<Candidate>& candidates
     graph_[node] = std::move(new_neighbors);
 }
 
+
+// ============================================================================
+// Medoid Computation  (Algorithm 3: "let s denote the medoid of dataset P")
+// ============================================================================
+// The paper uses the dataset medoid — the most central point — as start_node_,
+// rather than a random point. Starting from a central node ensures GreedySearch
+// can reach any region of the vector space in fewer hops, reducing both build
+// time (better candidates found early) and query latency.
+//
+// Exact medoid requires O(n^2) distance computations. We approximate it by:
+//   1. Computing the centroid (mean vector) in double precision.
+//   2. Finding the dataset point nearest to that centroid.
+// This is the standard approximation used by DiskANN in practice.
+
+uint32_t VamanaIndex::compute_medoid() const {
+    // Step 1: accumulate centroid
+    std::vector<double> centroid(dim_, 0.0);
+    for (uint32_t i = 0; i < npts_; i++) {
+        const float* vec = get_vector(i);
+        for (uint32_t d = 0; d < dim_; d++)
+            centroid[d] += vec[d];
+    }
+    for (uint32_t d = 0; d < dim_; d++)
+        centroid[d] /= npts_;
+
+    // Step 2: find closest point to centroid
+    uint32_t medoid = 0;
+    float best_dist = std::numeric_limits<float>::max();
+    for (uint32_t i = 0; i < npts_; i++) {
+        float dist = 0.0f;
+        const float* vec = get_vector(i);
+        for (uint32_t d = 0; d < dim_; d++) {
+            float diff = vec[d] - static_cast<float>(centroid[d]);
+            dist += diff * diff;
+        }
+        if (dist < best_dist) {
+            best_dist = dist;
+            medoid = i;
+        }
+    }
+    return medoid;
+}
+
 // ============================================================================
 // Build
 // ============================================================================
@@ -179,7 +222,7 @@ void VamanaIndex::build(const std::string& data_path, uint32_t R, uint32_t L,
 
     // --- Pick random start node ---
     std::mt19937 rng(42);  // fixed seed for reproducibility
-    start_node_ = rng() % npts_;
+    start_node_ = compute_medoid();
     std::cout << "  Start node: " << start_node_ << std::endl;
 
     // --- Create random insertion order ---

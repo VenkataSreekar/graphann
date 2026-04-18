@@ -86,6 +86,7 @@ class VamanaIndex {
     mutable std::vector<std::mutex> locks_;
 
     // ---- Helpers ----
+    uint32_t compute_medoid() const;
     const float* get_vector(uint32_t id) const {
         return data_ + (size_t)id * dim_;
     }
