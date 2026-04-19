@@ -32,15 +32,4 @@ target_link_libraries(search_index PRIVATE graphann_lib)
 
 # ── Radial Layer Graph (RLG) index ──────────────────────────────────────────
 # Point to src2 instead of src
-add_library(rlg_index STATIC src2/rlg_index.cpp) 
-target_include_directories(rlg_index PUBLIC include)
-
-if(OpenMP_CXX_FOUND)
-    target_link_libraries(rlg_index PUBLIC OpenMP::OpenMP_CXX)
-endif()
-
-add_executable(build_rlg src2/build_rlg.cpp)
-target_link_libraries(build_rlg PRIVATE rlg_index graphann_lib)
-
-add_executable(search_rlg src2/search_rlg.cpp)
-target_link_libraries(search_rlg PRIVATE rlg_index graphann_lib)
+V
