@@ -68,7 +68,7 @@ Requirements: C++17 compiler with OpenMP support (GCC ≥ 7, Clang ≥ 10).
 ```bash
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
-make -j
+cmake --build . --parallel
 ```
 
 This produces two executables: `build_index` and `search_index`.
