@@ -24,22 +24,19 @@ VamanaIndex::~VamanaIndex() {
 }
 
 // ============================================================================
-// Greedy Search (Fixed Beam Width L with Custom Start)
+// Greedy Search (Fixed Beam Width L)
 // ============================================================================
 std::pair<std::vector<VamanaIndex::Candidate>, uint32_t>
-VamanaIndex::greedy_search(const float* query, uint32_t L, uint32_t custom_start) const {
+VamanaIndex::greedy_search(const float* query, uint32_t L) const {
     std::set<Candidate> candidate_set;
     std::vector<bool> visited(npts_, false);
     uint32_t dist_cmps = 0;
 
-    // --- USE CUSTOM START IF PROVIDED ---
-    uint32_t actual_start = (custom_start == UINT32_MAX) ? start_node_ : custom_start;
-
     // Seed with start node
-    float start_dist = compute_l2sq(query, get_vector(actual_start), dim_);
+    float start_dist = compute_l2sq(query, get_vector(start_node_), dim_);
     dist_cmps++;
-    candidate_set.insert({start_dist, actual_start});
-    visited[actual_start] = true;
+    candidate_set.insert({start_dist, start_node_});
+    visited[start_node_] = true;
 
     std::set<uint32_t> expanded;
 
@@ -128,7 +125,11 @@ void VamanaIndex::robust_prune(uint32_t node, std::vector<Candidate>& candidates
             new_neighbors.push_back(cand_id);
     }
 
-    graph_[node] = std::move(new_neighbors);
+    // Thread-safe update of the node's neighborhood
+    {
+        std::lock_guard<std::mutex> lock(locks_[node]);
+        graph_[node] = std::move(new_neighbors);
+    }
 }
 
 // ============================================================================
@@ -242,6 +243,17 @@ void VamanaIndex::run_build_pass(const std::vector<uint32_t>& perm,
         // Step 1: Find candidate neighbors via GreedySearch
         auto [candidates, _dist_cmps] = greedy_search(get_vector(point), L);
 
+        // --- NEW: NEIGHBORHOOD MERGING (Fixes Catastrophic Forgetting) ---
+        // Ensure that existing edges (from Pass 1 or backward inserts) aren't discarded
+        {
+            std::lock_guard<std::mutex> lock(locks_[point]);
+            for (uint32_t existing_nbr : graph_[point]) {
+                float d = compute_l2sq(get_vector(point), get_vector(existing_nbr), dim_);
+                candidates.push_back({d, existing_nbr});
+            }
+        }
+        // -----------------------------------------------------------------
+
         // Step 2: Prune candidates to select out-neighbors
         robust_prune(point, candidates, alpha, R);
 
@@ -269,7 +281,6 @@ void VamanaIndex::run_build_pass(const std::vector<uint32_t>& perm,
                         float d = compute_l2sq(get_vector(nbr), get_vector(nn), dim_);
                         nbr_candidates.push_back({d, nn});
                     }
-                    graph_[nbr].clear(); 
                 }
                 robust_prune(nbr, nbr_candidates, alpha, R);
             }
@@ -288,7 +299,6 @@ void VamanaIndex::run_build_pass(const std::vector<uint32_t>& perm,
 // ============================================================================
 // Search
 // ============================================================================
-
 SearchResult VamanaIndex::search(const float* query, uint32_t K, uint32_t L) const {
     if (L < K) L = K;
 
