@@ -24,19 +24,35 @@ VamanaIndex::~VamanaIndex() {
 }
 
 // ============================================================================
-// Greedy Search (Fixed Beam Width L)
+// Greedy Search (Fixed Beam Width L + Multi-Start)
 // ============================================================================
 std::pair<std::vector<VamanaIndex::Candidate>, uint32_t>
-VamanaIndex::greedy_search(const float* query, uint32_t L) const {
+VamanaIndex::greedy_search(const float* query, uint32_t L, const std::vector<uint32_t>& multi_starts) const {
     std::set<Candidate> candidate_set;
     std::vector<bool> visited(npts_, false);
     uint32_t dist_cmps = 0;
 
-    // Seed with start node
+    // 1. Seed with the primary start node (Medoid)
     float start_dist = compute_l2sq(query, get_vector(start_node_), dim_);
     dist_cmps++;
     candidate_set.insert({start_dist, start_node_});
     visited[start_node_] = true;
+
+    // 2. --- INJECT MULTI-STARTS (To escape local minima) ---
+    for (uint32_t random_start : multi_starts) {
+        if (!visited[random_start]) {
+            float d = compute_l2sq(query, get_vector(random_start), dim_);
+            dist_cmps++;
+            candidate_set.insert({d, random_start});
+            visited[random_start] = true;
+        }
+    }
+    
+    // Ensure we don't accidentally exceed L right out of the gate
+    while (candidate_set.size() > L) {
+        candidate_set.erase(std::prev(candidate_set.end()));
+    }
+    // -------------------------------------------------------
 
     std::set<uint32_t> expanded;
 
@@ -303,7 +319,20 @@ SearchResult VamanaIndex::search(const float* query, uint32_t K, uint32_t L) con
     if (L < K) L = K;
 
     Timer t;
-    auto [candidates, dist_cmps] = greedy_search(query, L);
+
+    // --- GENERATE MULTI-START ENSEMBLE ---
+    // Pick 3 random points to act as alternative starting lines.
+    // This attacks the graph from 4 total angles (Medoid + 3 Randoms).
+    std::vector<uint32_t> ensemble_starts;
+    for(int i = 0; i < 3; i++) {
+        // Prevent modulo bias or zero-division edge cases
+        if (npts_ > 0) {
+            ensemble_starts.push_back(std::rand() % npts_);
+        }
+    }
+    // -------------------------------------
+
+    auto [candidates, dist_cmps] = greedy_search(query, L, ensemble_starts);
     double latency = t.elapsed_us();
 
     // Return top-K results

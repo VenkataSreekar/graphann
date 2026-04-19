@@ -61,10 +61,10 @@ class VamanaIndex {
 
     // ---- Core algorithms ----
 
-    // Greedy search starting from start_node_.
+    // Greedy search starting from start_node_ + optional ensemble starts
     // Returns (sorted candidate list, number of distance computations).
     std::pair<std::vector<Candidate>, uint32_t>
-    greedy_search(const float* query, uint32_t L) const;
+    greedy_search(const float* query, uint32_t L, const std::vector<uint32_t>& multi_starts = {}) const;
 
     // Alpha-RNG pruning: selects a diverse subset of candidates as neighbors.
     // Modifies graph_[node] in place. Candidates should NOT include node itself.
