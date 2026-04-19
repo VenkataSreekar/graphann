@@ -60,7 +60,7 @@ echo "=== Step 4: Searching with RLG index ==="
     --gt      "$GT_IBIN"    \
     --K 10                  \
     --L 10,20,30,50,75,100,150,200
-echo ""
+echo "
 
 # # ─── 5. Baseline: Vamana (rebuild if needed, then search) ────────────────────
 # echo "=== Step 5: Searching with Vamana index (baseline) ==="
