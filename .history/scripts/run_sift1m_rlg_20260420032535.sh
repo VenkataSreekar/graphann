@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Radial Layer Graph benchmark on SIFT1M — RLG-only workflow.
+# Radial Layer Graph benchmark on SIFT1M — mirrors run_sift1m.sh exactly.
 # Usage: ./scripts/run_sift1m_rlg.sh
 #
 # Prerequisites: run ./scripts/run_sift1m.sh once first so that
@@ -53,6 +53,7 @@ echo ""
 
 # ─── 4. Search with RLG (main result) ────────────────────────────────────────
 echo "=== Step 4: Searching with RLG index ==="
+echo "=== Search Results (K=10) ==="
 "$BUILD_DIR/search_rlg" \
     --index   "$RLG_INDEX"  \
     --data    "$BASE_FBIN"  \
@@ -62,9 +63,56 @@ echo "=== Step 4: Searching with RLG index ==="
     --L 10,20,30,50,75,100,150,200
 echo ""
 
+# echo "=== Done! ==="
+# echo "=== Step 5: Searching with Vamana index (baseline) ==="
+# if [ ! -f "$VAMANA_INDEX" ]; then
+#     echo "  Vamana index not found — building now..."
+#     "$BUILD_DIR/build_index" \
+#         --data "$BASE_FBIN" --output "$VAMANA_INDEX" \
+#         --R 32 --L 75 --alpha 1.2 --gamma 1.5
+# fi
+# "$BUILD_DIR/search_index" \
+#     --index   "$VAMANA_INDEX" \
+#     --data    "$BASE_FBIN"    \
+#     --queries "$QUERY_FBIN"   \
+#     --gt      "$GT_IBIN"      \
+#     --K 10                    \
+#     --L 10,20,30,50,75,100,150,200
+# echo ""
 
+# # ─── 6. m-value sweep ────────────────────────────────────────────────────────
+# echo "=== Step 6: RLG m-value sweep ==="
+# for M in 1.5 2.0 2.5 3.0; do
+#     IDX="$DATA_DIR/sift_rlg_m${M}.bin"
+#     echo ""
+#     echo "--- m = ${M} ---"
+#     "$BUILD_DIR/build_rlg" \
+#         --data "$BASE_FBIN" --output "$IDX" \
+#         --R 32 --L 75 --alpha 1.2 --gamma 1.5 --m "$M"
+#     "$BUILD_DIR/search_rlg" \
+#         --index "$IDX" --data "$BASE_FBIN" \
+#         --queries "$QUERY_FBIN" --gt "$GT_IBIN" \
+#         --K 10 --L 10,20,50,100,200
+# done
+# echo ""
 
-echo "=== Done! ==="
-echo ""
-echo "Capture results:  ./scripts/run_sift1m_rlg.sh | tee tmp/results_rlg.txt"
-echo "Plot:             python3 scripts/plot_pareto.py tmp/results_rlg.txt"
+# # ─── 7. alpha sweep (now means RNG alpha, same as Vamana) ────────────────────
+# echo "=== Step 7: alpha-RNG sweep ==="
+# for A in 1.0 1.1 1.2 1.4 1.6; do
+#     IDX="$DATA_DIR/sift_rlg_a${A}.bin"
+#     echo ""
+#     echo "--- alpha = ${A} ---"
+#     "$BUILD_DIR/build_rlg" \
+#         --data "$BASE_FBIN" --output "$IDX" \
+#         --R 32 --L 75 --alpha "$A" --gamma 1.5 --m 2.0
+#     "$BUILD_DIR/search_rlg" \
+#         --index "$IDX" --data "$BASE_FBIN" \
+#         --queries "$QUERY_FBIN" --gt "$GT_IBIN" \
+#         --K 10 --L 10,20,50,100,200
+# done
+# echo ""
+
+# echo "=== Done! ==="
+# echo ""
+# echo "Capture results:  ./scripts/run_sift1m_rlg.sh | tee tmp/results_rlg.txt"
+# echo "Plot:             python3 scripts/plot_pareto.py tmp/results_rlg.txt"

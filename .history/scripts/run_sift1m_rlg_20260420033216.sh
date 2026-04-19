@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Radial Layer Graph benchmark on SIFT1M — RLG-only workflow.
+# Radial Layer Graph benchmark on SIFT1M — mirrors run_sift1m.sh exactly.
 # Usage: ./scripts/run_sift1m_rlg.sh
 #
 # Prerequisites: run ./scripts/run_sift1m.sh once first so that
@@ -64,7 +64,8 @@ echo ""
 
 
 
-echo "=== Done! ==="
-echo ""
-echo "Capture results:  ./scripts/run_sift1m_rlg.sh | tee tmp/results_rlg.txt"
-echo "Plot:             python3 scripts/plot_pareto.py tmp/results_rlg.txt"
+
+# echo "=== Done! ==="
+# echo ""
+# echo "Capture results:  ./scripts/run_sift1m_rlg.sh | tee tmp/results_rlg.txt"
+# echo "Plot:             python3 scripts/plot_pareto.py tmp/results_rlg.txt"
