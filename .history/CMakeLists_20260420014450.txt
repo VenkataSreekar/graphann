@@ -30,6 +30,13 @@ target_link_libraries(build_index PRIVATE graphann_lib)
 add_executable(search_index src/search_index.cpp)
 target_link_libraries(search_index PRIVATE graphann_lib)
 
+# ── Radial Layer Graph (RLG) index ──────────────────────────────────────────
+# Point to src2 instead of src
+# ─────────────────────────────────────────────────────────────────────────────
+# RLG patch — append these lines to the BOTTOM of your existing CMakeLists.txt
+# Do NOT change anything above; just paste from the line below.
+# ─────────────────────────────────────────────────────────────────────────────
+
 # ── Radial Layer Graph (RLG) — files live in src2/ ───────────────────────────
 add_library(rlg_index STATIC
     src2/rlg_index.cpp
