@@ -71,6 +71,11 @@ class VamanaIndex {
     void robust_prune(uint32_t node, std::vector<Candidate>& candidates,
                       float alpha, uint32_t R);
 
+    // Single iteration over the dataset to build/refine the graph
+    void run_build_pass(const std::vector<uint32_t>& perm,
+                        uint32_t R, uint32_t L,
+                        float alpha, uint32_t gamma_R);
+
     // ---- Data ----
     float*   data_    = nullptr;  // contiguous row-major [npts x dim], aligned
     uint32_t npts_    = 0;
