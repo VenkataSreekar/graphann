@@ -310,9 +310,6 @@ void RLGIndex::build_pass(int L_build) {
             }
         }
     }
-
-    // Ensure the progress line terminates cleanly after parallel printing.
-    std::cout << "[RLG] Pass complete: " << n_ << " / " << n_ << "\n";
 }
 
 // ════════════════════════════════════════════════════════════════════════════
