@@ -51,23 +51,3 @@ target_link_libraries(search_rlg PRIVATE rlg_index)
 if(OpenMP_CXX_FOUND)
     target_link_libraries(search_rlg PRIVATE OpenMP::OpenMP_CXX)
 endif()
-target_link_libraries(search_rlg PRIVATE rlg_index graphann_lib)
-
-# ==========================================================================
-# Vamana-JL library  (src_jl/)  — JL dimensionality reduction variant
-# ==========================================================================
-add_library(graphann_jl_lib STATIC
-    src_jl/vamana_index_jl.cpp
-    src/distance.cpp
-    src/io_utils.cpp          
-)
-
-# Tell the JL library to look in the include/ folder for .h files
-target_include_directories(graphann_jl_lib PUBLIC include)
-target_link_libraries(graphann_jl_lib PUBLIC OpenMP::OpenMP_CXX)
-
-add_executable(build_index_jl  src_jl/build_index_jl.cpp)
-add_executable(search_index_jl src_jl/search_index_jl.cpp)
-
-target_link_libraries(build_index_jl  PRIVATE graphann_jl_lib)
-target_link_libraries(search_index_jl PRIVATE graphann_jl_lib)
