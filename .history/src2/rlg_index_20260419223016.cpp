@@ -268,6 +268,7 @@ void RLGIndex::build_pass(int L_build) {
         }
 
         // ── backward edges (navigability guarantee) ───────────────────────────
+        // ── backward edges (navigability guarantee) ───────────────────────────
         for (int nb : neighbors) {
 #ifdef _OPENMP
             std::lock_guard<std::mutex> lk(mtx_[nb]);

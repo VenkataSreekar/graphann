@@ -268,6 +268,7 @@ void RLGIndex::build_pass(int L_build) {
         }
 
         // ── backward edges (navigability guarantee) ───────────────────────────
+        // ── backward edges (navigability guarantee) ───────────────────────────
         for (int nb : neighbors) {
 #ifdef _OPENMP
             std::lock_guard<std::mutex> lk(mtx_[nb]);
@@ -277,7 +278,7 @@ void RLGIndex::build_pass(int L_build) {
                 nb_adj.push_back(p);
                 // OPTIMIZATION: Only re-prune if the list gets 20% too large.
                 // This stops threads from getting stuck waiting on the lock!
-                if ((int)nb_adj.size() > (int)(R_ * 1.2)) {
+                if ((int)nb_adj.size() > (int)(R_ * 1.2)) { {
                     // re-prune nb with all its current neighbors as candidates
                     std::vector<Candidate> nb_cands;
                     nb_cands.reserve(nb_adj.size());

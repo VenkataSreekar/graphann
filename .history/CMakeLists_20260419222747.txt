@@ -1,0 +1,48 @@
+cmake_minimum_required(VERSION 3.14)
+project(graphann LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Optimization flags
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -march=native -DNDEBUG")
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
+
+# Find OpenMP
+find_package(OpenMP REQUIRED)
+
+# Library with shared sources
+add_library(graphann_lib STATIC
+    src/distance.cpp
+    src/io_utils.cpp
+    src/vamana_index.cpp
+)
+target_include_directories(graphann_lib PUBLIC include)
+target_link_libraries(graphann_lib PUBLIC OpenMP::OpenMP_CXX)
+
+# Build index executable
+add_executable(build_index src/build_index.cpp)
+target_link_libraries(build_index PRIVATE graphann_lib)
+
+# Search index executable
+add_executable(search_index src/search_index.cpp)
+target_link_libraries(search_index PRIVATE graphann_lib)
+
+# ── Radial Layer Graph (RLG) index ──────────────────────────────────────────
+# Point to src2 instead of src
+add_library(rlg_index STATIC src2/rlg_index.cpp) 
+target_include_directories(rlg_index PUBLIC include)
+
+add_executable(build_rlg src2/build_rlg.cpp)
+target_link_libraries(build_rlg PRIVATE rlg_index graphann_lib) # Link existing lib too
+
+add_executable(search_rlg src2/search_rlg.cpp)
+target_link_libraries(search_rlg PRIVATE rlg_index graphann_lib)
+
+# Ensure OpenMP is linked if needed
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(build_rlg PRIVATE OpenMP::OpenMP_CXX)
+    target_link_libraries(search_rlg PRIVATE OpenMP::OpenMP_CXX)
+endif()

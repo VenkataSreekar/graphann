@@ -275,9 +275,7 @@ void RLGIndex::build_pass(int L_build) {
             auto& nb_adj = adj_[nb];
             if (std::find(nb_adj.begin(), nb_adj.end(), p) == nb_adj.end()) {
                 nb_adj.push_back(p);
-                // OPTIMIZATION: Only re-prune if the list gets 20% too large.
-                // This stops threads from getting stuck waiting on the lock!
-                if ((int)nb_adj.size() > (int)(R_ * 1.2)) {
+                if ((int)nb_adj.size() > R_) {
                     // re-prune nb with all its current neighbors as candidates
                     std::vector<Candidate> nb_cands;
                     nb_cands.reserve(nb_adj.size());
