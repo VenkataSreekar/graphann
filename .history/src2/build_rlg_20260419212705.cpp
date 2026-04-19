@@ -93,9 +93,9 @@ int main(int argc, char** argv) {
     rlg::RLGIndex index;
 
     Timer timer;
-    timer.reset();
+    timer.start();
     index.build(data.data(), (int)n, (int)dim, R, m, L, alpha, two_pass);
-    double build_sec = timer.elapsed_seconds();
+    double build_sec = timer.elapsed();
 
     std::cout << "\nBuild time: " << build_sec << " s\n";
 
