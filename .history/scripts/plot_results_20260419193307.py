@@ -18,12 +18,7 @@ Also plots degree distribution histogram if degree_dist.tsv is present:
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-import os
-
-# Create results directory if it doesn't exist
-RESULTS_DIR = "results"
-if not os.path.exists(RESULTS_DIR):
-    os.makedirs(RESULTS_DIR)
+import os, sys
 
 plt.rcParams.update({
     "font.family": "monospace",
@@ -69,7 +64,7 @@ def plot_pareto(vamana_data, rlg_data, K=10, out="pareto_curve.png"):
     ax.set_xlim(0, 1.02)
 
     fig.tight_layout()
-    fig.savefig(os.path.join(RESULTS_DIR, out), bbox_inches="tight")
+    fig.savefig(out, bbox_inches="tight")
     print(f"Saved: {out}")
     plt.close(fig)
 
@@ -97,8 +92,9 @@ def plot_efficiency(vamana_data, rlg_data, K=10, out="efficiency.png"):
     ax.set_title("Recall vs. Candidates Evaluated\n(hardware-independent efficiency)", fontsize=12)
     ax.legend(fontsize=10)
     ax.set_ylim(0, 1.05)
+
     fig.tight_layout()
-    fig.savefig(os.path.join(RESULTS_DIR, out), bbox_inches="tight")
+    fig.savefig(out, bbox_inches="tight")
     print(f"Saved: {out}")
     plt.close(fig)
 
@@ -129,7 +125,7 @@ def plot_degree_dist(vamana_degrees, rlg_degrees, R, out="degree_dist.png"):
 
     fig.suptitle("Degree Distribution Comparison", fontsize=13, y=1.01)
     fig.tight_layout()
-    fig.savefig(os.path.join(RESULTS_DIR, out), bbox_inches="tight")
+    fig.savefig(out, bbox_inches="tight")
     print(f"Saved: {out}")
     plt.close(fig)
 
@@ -163,7 +159,7 @@ def plot_shell_dist(shell_counts_per_node, K=12, out="shell_dist.png"):
     ax.set_facecolor("white")
     ax.grid(True, axis='y', color=C_GRID)
     fig.tight_layout()
-    fig.savefig(os.path.join(RESULTS_DIR, out), bbox_inches="tight")
+    fig.savefig(out, bbox_inches="tight")
     print(f"Saved: {out}")
     plt.close(fig)
 
