@@ -24,58 +24,37 @@ VamanaIndex::~VamanaIndex() {
 }
 
 // ============================================================================
-// Greedy Search (With Gradient-Based Adaptive L)
+// Greedy Search (Fixed Beam Width L with Custom Start)
 // ============================================================================
 std::pair<std::vector<VamanaIndex::Candidate>, uint32_t>
-VamanaIndex::greedy_search(const float* query, uint32_t L) const {
+VamanaIndex::greedy_search(const float* query, uint32_t L, uint32_t custom_start) const {
     std::set<Candidate> candidate_set;
     std::vector<bool> visited(npts_, false);
     uint32_t dist_cmps = 0;
 
-    // --- ADAPTIVE L CONFIGURATION ---
-    uint32_t L_max = L;
-    uint32_t L_min = 10;
-    // Start fast: begin with a smaller list (1/4th the size) to zoom down the highways
-    uint32_t current_L = std::max(L_min, L_max / 4); 
-    float prev_best_dist = std::numeric_limits<float>::max();
-    // --------------------------------
+    // --- USE CUSTOM START IF PROVIDED ---
+    uint32_t actual_start = (custom_start == UINT32_MAX) ? start_node_ : custom_start;
 
     // Seed with start node
-    float start_dist = compute_l2sq(query, get_vector(start_node_), dim_);
+    float start_dist = compute_l2sq(query, get_vector(actual_start), dim_);
     dist_cmps++;
-    candidate_set.insert({start_dist, start_node_});
-    visited[start_node_] = true;
+    candidate_set.insert({start_dist, actual_start});
+    visited[actual_start] = true;
 
     std::set<uint32_t> expanded;
 
     while (true) {
         // Find closest candidate that hasn't been expanded yet
         uint32_t best_node = UINT32_MAX;
-        float current_best_dist = std::numeric_limits<float>::max();
 
         for (const auto& [dist, id] : candidate_set) {
             if (expanded.find(id) == expanded.end()) {
                 best_node = id;
-                current_best_dist = dist;
                 break;
             }
         }
         if (best_node == UINT32_MAX)
             break;  // all candidates expanded
-
-        // --- ADAPTIVE L GRADIENT CHECK ---
-        float improvement = prev_best_dist - current_best_dist;
-
-        // If making massive leaps (> 5% improvement), shrink L to run faster (Exploit)
-        if (improvement > 0.05f * prev_best_dist) {
-            current_L = std::max(L_min, current_L - 5);
-        }
-        // If progress is stalling, expand L to look around carefully (Explore)
-        else {
-            current_L = std::min(L_max, current_L + 10);
-        }
-        prev_best_dist = current_best_dist;
-        // ---------------------------------
 
         expanded.insert(best_node);
 
@@ -93,15 +72,18 @@ VamanaIndex::greedy_search(const float* query, uint32_t L) const {
             float d = compute_l2sq(query, get_vector(nbr), dim_);
             dist_cmps++;
 
-            // Insert the new candidate
-            candidate_set.insert({d, nbr});
-
-            // --- ADAPTIVE TRIMMING ---
-            // If the dynamic current_L shrank or we added too many, trim the worst ones
-            while (candidate_set.size() > current_L) {
-                candidate_set.erase(std::prev(candidate_set.end()));
+            // --- FIXED L TRIMMING ---
+            // Insert if candidate set isn't full or this is closer than worst
+            if (candidate_set.size() < L) {
+                candidate_set.insert({d, nbr});
+            } else {
+                auto worst = std::prev(candidate_set.end());
+                if (d < worst->first) {
+                    candidate_set.erase(worst);
+                    candidate_set.insert({d, nbr});
+                }
             }
-            // -------------------------
+            // ------------------------
         }
     }
 
