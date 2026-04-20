@@ -43,6 +43,9 @@ target_link_libraries(rlg_index PUBLIC graphann_lib)
 add_executable(build_rlg src2/build_rlg.cpp)
 target_link_libraries(build_rlg PRIVATE rlg_index)
 
+add_executable(search_rlg src2/search_rlg.cpp)
+target_link_libraries(search_rlg PRIVATE rlg_index graphann_lib)
+
 # ==========================================================================
 # Vamana-JL library  (src_jl/)  — JL dimensionality reduction variant
 # ==========================================================================
