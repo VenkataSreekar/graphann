@@ -1,16 +1,16 @@
 // search_ivrg.cpp — Search an IVRG index
-// Place in graphann/src_ivrg/
+// Place in graphann/src3/
 //
-// Output format is IDENTICAL to search_index.cpp so results can be
-// copy-pasted side-by-side in the report.
-//
-// Usage:
+// Usage (mirrors search_index.cpp exactly):
 //   ./build/search_ivrg \
 //       --index   tmp/sift_ivrg.bin        \
 //       --data    tmp/sift_base.fbin       \
 //       --queries tmp/sift_query.fbin      \
 //       --gt      tmp/sift_gt.ibin         \
 //       --K 10 --L 10,20,30,50,75,100,150,200
+//
+// Output columns match search_index.cpp exactly (same L/Recall/Cmps/Lat/P99)
+// so results are directly copy-paste comparable.
 
 #include "ivrg_index.h"
 #include "io_utils.h"
@@ -38,14 +38,14 @@ static std::vector<uint32_t> parse_L(const std::string& s) {
     std::sort(v.begin(), v.end()); return v;
 }
 
-static double compute_recall(const std::vector<uint32_t>& result,
-                              const uint32_t* gt, uint32_t K)
+static double recall_at_k(const std::vector<uint32_t>& res,
+                           const uint32_t* gt, uint32_t K)
 {
-    uint32_t found = 0;
-    for (uint32_t i = 0; i < K && i < result.size(); ++i)
+    uint32_t h = 0;
+    for (uint32_t i = 0; i < K && i < res.size(); ++i)
         for (uint32_t j = 0; j < K; ++j)
-            if (result[i] == gt[j]) { found++; break; }
-    return (double)found / K;
+            if (res[i] == gt[j]) { h++; break; }
+    return (double)h / K;
 }
 
 int main(int argc, char** argv) {
@@ -70,35 +70,35 @@ int main(int argc, char** argv) {
     auto Lvals = parse_L(L_str);
     if (Lvals.empty()) return 1;
 
-    // ── Load ─────────────────────────────────────────────────────────────────
-    std::cout << "Loading index..." << std::endl;
+    // Load
+    std::cout << "Loading index...\n";
     ivrg::IVRGIndex index;
     index.load(idx_path, data_path);
 
-    std::cout << "Loading queries from " << query_path << "..." << std::endl;
+    std::cout << "Loading queries from " << query_path << "...\n";
     FloatMatrix queries = load_fbin(query_path);
-    std::cout << "  Queries: " << queries.npts << " x " << queries.dims << std::endl;
+    std::cout << "  Queries: " << queries.npts << " x " << queries.dims << "\n";
 
     if (queries.dims != index.get_dim()) {
         std::cerr << "Dim mismatch.\n"; return 1;
     }
 
-    std::cout << "Loading ground truth from " << gt_path << "..." << std::endl;
+    std::cout << "Loading ground truth from " << gt_path << "...\n";
     IntMatrix gt = load_ibin(gt_path);
-    std::cout << "  Ground truth: " << gt.npts << " x " << gt.dims << std::endl;
+    std::cout << "  GT: " << gt.npts << " x " << gt.dims << "\n\n";
 
     if (gt.dims < K) K = gt.dims;
     uint32_t nq = queries.npts;
 
-    // ── Header — IDENTICAL to search_index.cpp ────────────────────────────────
-    std::cout << "\n=== Search Results (K=" << K << ") ===" << std::endl;
+    // ── Header — identical to search_index.cpp ────────────────────────────
+    std::cout << "\n=== Search Results (K=" << K << ") ===\n";
     std::cout << std::setw(8)  << "L"
               << std::setw(14) << "Recall@" + std::to_string(K)
               << std::setw(16) << "Avg Dist Cmps"
               << std::setw(18) << "Avg Latency (us)"
               << std::setw(18) << "P99 Latency (us)"
-              << std::endl;
-    std::cout << std::string(74, '-') << std::endl;
+              << "\n";
+    std::cout << std::string(74, '-') << "\n";
 
     for (uint32_t L : Lvals) {
         std::vector<double>   recalls(nq), lats(nq);
@@ -107,26 +107,25 @@ int main(int argc, char** argv) {
         #pragma omp parallel for schedule(dynamic, 16)
         for (uint32_t q = 0; q < nq; ++q) {
             ivrg::SearchResult res = index.search(queries.row(q), K, L);
-            recalls[q] = compute_recall(res.ids, gt.row(q), K);
+            recalls[q] = recall_at_k(res.ids, gt.row(q), K);
             cmps[q]    = res.dist_cmps;
             lats[q]    = res.latency_us;
         }
 
         double avg_r = std::accumulate(recalls.begin(), recalls.end(), 0.0) / nq;
         double avg_c = (double)std::accumulate(cmps.begin(), cmps.end(), 0ULL) / nq;
-        double avg_l = std::accumulate(lats.begin(), lats.end(), 0.0) / nq;
+        double avg_l = std::accumulate(lats.begin(),    lats.end(),    0.0) / nq;
         std::sort(lats.begin(), lats.end());
         double p99 = lats[(size_t)(0.99 * nq)];
 
-        // ── Output row — IDENTICAL column widths to search_index.cpp ────────
         std::cout << std::setw(8)  << L
                   << std::setw(14) << std::fixed << std::setprecision(4) << avg_r
                   << std::setw(16) << std::fixed << std::setprecision(1) << avg_c
                   << std::setw(18) << std::fixed << std::setprecision(1) << avg_l
                   << std::setw(18) << std::fixed << std::setprecision(1) << p99
-                  << std::endl;
+                  << "\n";
     }
 
-    std::cout << "\nDone." << std::endl;
+    std::cout << "\nDone.\n";
     return 0;
 }

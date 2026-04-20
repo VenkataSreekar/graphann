@@ -1,8 +1,8 @@
 // ivrg_index.cpp — Inverted Voronoi Routing Graph
-// Place in graphann/src_ivrg/
+// Place in graphann/src3/
 
 #include "ivrg_index.h"
-#include "distance.h"
+#include "distance.h"   // compute_l2sq
 
 #include <algorithm>
 #include <cstdlib>
@@ -12,7 +12,6 @@
 #include <random>
 #include <set>
 #include <stdexcept>
-#include <cmath>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -22,24 +21,20 @@ namespace ivrg {
 
 // ════════════════════════════════════════════════════════════════════════════
 //  K-MEANS ROUTING LAYER
-//
-//  FIX vs previous version:
-//  The old code did an O(K×N) scan to find representatives after Lloyd's
-//  iterations (512 × 1,000,000 = 512M distance computations — ~60 s).
-//  The new code tracks the nearest sample point per centroid DURING the
-//  final assignment pass.  Cost: O(S×K) = 200K×512 = 100M ops — same
-//  work we were already doing — zero extra time.
 // ════════════════════════════════════════════════════════════════════════════
 
+// k-means++ initialisation: seeds are chosen with probability proportional
+// to D^2(x, nearest_existing_centroid).  Produces well-spread centroids.
 static std::vector<std::vector<float>>
-kmeans_pp_init(const float* data, uint32_t dim,
-               const std::vector<uint32_t>& sample_idx,
-               uint32_t K, std::mt19937& rng)
+kmeans_pp_init(const float* data, uint32_t n, uint32_t dim,
+               const std::vector<uint32_t>& sample_idx, uint32_t K,
+               std::mt19937& rng)
 {
     uint32_t S = (uint32_t)sample_idx.size();
     std::vector<std::vector<float>> centroids;
     centroids.reserve(K);
 
+    // First centroid: random sample point
     std::uniform_int_distribution<uint32_t> pick(0, S - 1);
     uint32_t first = sample_idx[pick(rng)];
     centroids.push_back({data + (size_t)first * dim,
@@ -48,6 +43,7 @@ kmeans_pp_init(const float* data, uint32_t dim,
     std::vector<float> min_d2(S, std::numeric_limits<float>::max());
 
     for (uint32_t k = 1; k < K; ++k) {
+        // Update min_d2 for the newly added centroid
         const std::vector<float>& last = centroids.back();
         for (uint32_t i = 0; i < S; ++i) {
             float d = compute_l2sq(data + (size_t)sample_idx[i] * dim,
@@ -55,11 +51,13 @@ kmeans_pp_init(const float* data, uint32_t dim,
             if (d < min_d2[i]) min_d2[i] = d;
         }
 
+        // Sample next centroid with probability ∝ D²
         float total = 0.f;
         for (float v : min_d2) total += v;
 
         std::uniform_real_distribution<float> uni(0.f, total);
-        float threshold = uni(rng), cum = 0.f;
+        float threshold = uni(rng);
+        float cum = 0.f;
         uint32_t chosen = sample_idx[0];
         for (uint32_t i = 0; i < S; ++i) {
             cum += min_d2[i];
@@ -78,7 +76,7 @@ void IVRGIndex::build_routing_layer(uint32_t K,
     K_ = K;
     std::mt19937 rng(42);
 
-    // ── 1. Sample ─────────────────────────────────────────────────────────────
+    // ── 1. Sample up to kmeans_sample points ─────────────────────────────
     std::vector<uint32_t> sample_idx(npts_);
     std::iota(sample_idx.begin(), sample_idx.end(), 0);
     if (npts_ > kmeans_sample) {
@@ -86,84 +84,86 @@ void IVRGIndex::build_routing_layer(uint32_t K,
         sample_idx.resize(kmeans_sample);
     }
     uint32_t S = (uint32_t)sample_idx.size();
-    std::cout << "[IVRG] k-means: K=" << K << "  sample=" << S
-              << "  iters=" << T_iter << "\n";
+    std::cout << "[IVRG] k-means: K=" << K << " sample=" << S
+              << " iters=" << T_iter << "\n";
 
-    // ── 2. k-means++ initialisation ───────────────────────────────────────────
-    centroids_ = kmeans_pp_init(data_, dim_, sample_idx, K, rng);
+    // ── 2. k-means++ initialisation ───────────────────────────────────────
+    centroids_ = kmeans_pp_init(data_, npts_, dim_, sample_idx, K, rng);
 
-    // ── 3. Lloyd's iterations ─────────────────────────────────────────────────
+    // ── 3. Lloyd's iterations ─────────────────────────────────────────────
     std::vector<uint32_t> assign(S);
 
     for (uint32_t iter = 0; iter < T_iter; ++iter) {
-        // Assignment step — parallel
+        // Assignment step
         #pragma omp parallel for schedule(dynamic, 256)
         for (uint32_t i = 0; i < S; ++i) {
             const float* xi = data_ + (size_t)sample_idx[i] * dim_;
             float best = std::numeric_limits<float>::max();
-            uint32_t bk = 0;
+            uint32_t best_k = 0;
             for (uint32_t k = 0; k < K; ++k) {
                 float d = compute_l2sq(xi, centroids_[k].data(), dim_);
-                if (d < best) { best = d; bk = k; }
+                if (d < best) { best = d; best_k = k; }
             }
-            assign[i] = bk;
+            assign[i] = best_k;
         }
 
-        // Update step — accumulate sums
+        // Update step: recompute centroids as mean of assigned points
         std::vector<std::vector<double>> sums(K, std::vector<double>(dim_, 0.0));
         std::vector<uint32_t> counts(K, 0);
+
         for (uint32_t i = 0; i < S; ++i) {
             uint32_t k = assign[i];
             const float* xi = data_ + (size_t)sample_idx[i] * dim_;
             for (uint32_t d = 0; d < dim_; ++d) sums[k][d] += xi[d];
             counts[k]++;
         }
+
         for (uint32_t k = 0; k < K; ++k) {
             if (counts[k] == 0) continue;
             for (uint32_t d = 0; d < dim_; ++d)
                 centroids_[k][d] = (float)(sums[k][d] / counts[k]);
         }
 
-        if ((iter + 1) % 5 == 0 || iter == T_iter - 1)
+        if ((iter + 1) % 5 == 0)
             std::cout << "[IVRG] Lloyd iter " << (iter+1) << "/" << T_iter << "\n";
     }
 
-    // ── 4. Find representatives  —  O(S × K) NOT O(K × N) ────────────────────
-    //
-    //  During the FINAL assignment pass, track the sample point nearest
-    //  to each centroid.  This is the same work as the assignment step,
-    //  so zero extra cost.  The representative is the nearest actual data
-    //  point (from the sample) — perfectly adequate for routing.
-    //
-    representatives_.assign(K, sample_idx[0]);
-    std::vector<float> best_dist(K, std::numeric_limits<float>::max());
+    // ── 4. Find cluster representatives (nearest data point to each centroid)
+    //       Search over the full dataset (not just sample) for accuracy.
+    //       Cost: K * npts * dim / THREADS — about 2–5 s for K=512, n=1M, dim=128.
+    representatives_.resize(K);
 
-    for (uint32_t i = 0; i < S; ++i) {
-        uint32_t k = assign[i];
-        const float* xi = data_ + (size_t)sample_idx[i] * dim_;
-        float d = compute_l2sq(xi, centroids_[k].data(), dim_);
-        if (d < best_dist[k]) {
-            best_dist[k] = d;
-            representatives_[k] = sample_idx[i];
+    std::cout << "[IVRG] Finding cluster representatives...\n";
+    #pragma omp parallel for schedule(dynamic, 16)
+    for (uint32_t k = 0; k < K; ++k) {
+        float best = std::numeric_limits<float>::max();
+        uint32_t best_id = 0;
+        for (uint32_t i = 0; i < npts_; ++i) {
+            float d = compute_l2sq(data_ + (size_t)i * dim_,
+                                   centroids_[k].data(), dim_);
+            if (d < best) { best = d; best_id = i; }
         }
+        representatives_[k] = best_id;
     }
-
-    std::cout << "[IVRG] Routing layer built ("
-              << K << " cells, representatives from " << S << " sampled points).\n";
+    std::cout << "[IVRG] Routing layer built.\n";
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  ROUTING  — O(K × dim), cheaper than one greedy-search expansion step
+//  ROUTING  — find nprobe nearest centroids and return their representatives
 // ════════════════════════════════════════════════════════════════════════════
 
 std::vector<uint32_t> IVRGIndex::route(const float* query, uint32_t np) const {
-    struct CD { float d; uint32_t k;
-                bool operator<(const CD& o) const { return d < o.d; } };
+    // O(K * dim) scan — for K=512, dim=128 this is 65k operations.
+    // Cheaper than a single expansion step in Vamana beam search.
+    struct CD { float d; uint32_t k; bool operator<(const CD& o) const { return d < o.d; } };
     std::vector<CD> heap;
     heap.reserve(K_);
-    for (uint32_t k = 0; k < K_; ++k)
-        heap.push_back({compute_l2sq(query, centroids_[k].data(), dim_), k});
+    for (uint32_t k = 0; k < K_; ++k) {
+        float d = compute_l2sq(query, centroids_[k].data(), dim_);
+        heap.push_back({d, k});
+    }
 
+    // Partial sort: we only need the top np
     uint32_t take = std::min(np, K_);
     std::partial_sort(heap.begin(), heap.begin() + take, heap.end());
 
@@ -171,41 +171,45 @@ std::vector<uint32_t> IVRGIndex::route(const float* query, uint32_t np) const {
     seeds.reserve(take);
     for (uint32_t i = 0; i < take; ++i)
         seeds.push_back(representatives_[heap[i].k]);
+
     return seeds;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  GREEDY BEAM SEARCH  (multi-seed)
+//  GREEDY BEAM SEARCH  (multi-seed version)
 // ════════════════════════════════════════════════════════════════════════════
 
 std::pair<std::vector<IVRGIndex::Candidate>, uint32_t>
-IVRGIndex::greedy_search(const float* query, uint32_t L,
+IVRGIndex::greedy_search(const float* query,
+                          uint32_t L,
                           const std::vector<uint32_t>& seeds) const
 {
     uint32_t dist_cmps = 0;
     std::set<Candidate> candidate_set;
     std::vector<bool>   visited(npts_, false);
 
-    // Initialise with all seeds (deduplication via visited)
+    // ── Initialise with all seeds ─────────────────────────────────────────
     for (uint32_t seed : seeds) {
         if (visited[seed]) continue;
         visited[seed] = true;
         float d = compute_l2sq(query, get_vec(seed), dim_); dist_cmps++;
         candidate_set.insert({d, seed});
     }
-    // Always include medoid as a safety fallback
-    if (!visited[start_node_]) {
+    // Fallback: if no seeds given, start from global medoid
+    if (candidate_set.empty()) {
         visited[start_node_] = true;
         float d = compute_l2sq(query, get_vec(start_node_), dim_); dist_cmps++;
         candidate_set.insert({d, start_node_});
     }
-    // Trim to L if seeds overfill
+
+    // Trim to L
     while (candidate_set.size() > L)
         candidate_set.erase(std::prev(candidate_set.end()));
 
     std::set<uint32_t> expanded;
 
     while (true) {
+        // Closest unexpanded candidate
         uint32_t best = UINT32_MAX;
         for (auto& [d, id] : candidate_set)
             if (!expanded.count(id)) { best = id; break; }
@@ -221,6 +225,7 @@ IVRGIndex::greedy_search(const float* query, uint32_t L,
         for (uint32_t nb : nbrs) {
             if (visited[nb]) continue;
             visited[nb] = true;
+
             float d = compute_l2sq(query, get_vec(nb), dim_); dist_cmps++;
             if (candidate_set.size() < L) {
                 candidate_set.insert({d, nb});
@@ -237,8 +242,15 @@ IVRGIndex::greedy_search(const float* query, uint32_t L,
     return {{candidate_set.begin(), candidate_set.end()}, dist_cmps};
 }
 
+// Single-seed version used during build
+std::pair<std::vector<IVRGIndex::Candidate>, uint32_t>
+IVRGIndex::greedy_search_from(const float* query, uint32_t start, uint32_t L) const
+{
+    return greedy_search(query, L, {start});
+}
+
 // ════════════════════════════════════════════════════════════════════════════
-//  ROBUST PRUNE  (identical to VamanaIndex)
+//  ROBUST PRUNE  (identical to VamanaIndex::robust_prune)
 // ════════════════════════════════════════════════════════════════════════════
 
 void IVRGIndex::robust_prune(uint32_t node,
@@ -268,7 +280,7 @@ void IVRGIndex::robust_prune(uint32_t node,
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  MEDOID  (same as Vamana)
+//  MEDOID  (identical to VamanaIndex::compute_medoid)
 // ════════════════════════════════════════════════════════════════════════════
 
 uint32_t IVRGIndex::compute_medoid() const {
@@ -302,10 +314,9 @@ void IVRGIndex::run_build_pass(const std::vector<uint32_t>& perm,
     for (size_t idx = 0; idx < npts_; ++idx) {
         uint32_t point = perm[idx];
 
-        // Search from medoid (single seed during build — routing layer not built yet)
-        auto [cands, _dc] = greedy_search(get_vec(point), L, {start_node_});
+        auto [cands, _dc] = greedy_search_from(get_vec(point), start_node_, L);
 
-        // Neighbourhood merging
+        // Neighbourhood merging (prevents catastrophic forgetting)
         {
             std::lock_guard<std::mutex> lk(locks_[point]);
             for (uint32_t nb : graph_[point]) {
@@ -343,7 +354,7 @@ void IVRGIndex::run_build_pass(const std::vector<uint32_t>& perm,
             }
         }
 
-        if (idx % 50000 == 0) {
+        if (idx % 10000 == 0) {
             #pragma omp critical
             std::cout << "\r  Processed " << idx << " / " << npts_
                       << " points" << std::flush;
@@ -361,15 +372,16 @@ void IVRGIndex::build(const std::string& data_path,
                        uint32_t R, uint32_t L,
                        float alpha, float gamma,
                        uint32_t K_clusters, uint32_t nprobe,
-                       uint32_t T_iter, uint32_t kmeans_sample)
+                       uint32_t T_iter,    uint32_t kmeans_sample)
 {
     nprobe_ = nprobe;
 
-    std::cout << "Loading data from " << data_path << "..." << std::endl;
+    // ── Load data ─────────────────────────────────────────────────────────
+    std::cout << "Loading data from " << data_path << " ...\n";
     FloatMatrix mat = load_fbin(data_path);
     npts_ = mat.npts; dim_ = mat.dims;
     data_ = mat.data.release(); owns_data_ = true;
-    std::cout << "  Points: " << npts_ << "  Dims: " << dim_ << std::endl;
+    std::cout << "  n=" << npts_ << "  dim=" << dim_ << "\n";
 
     if (L < R) L = R;
     graph_.assign(npts_, {});
@@ -377,7 +389,7 @@ void IVRGIndex::build(const std::string& data_path,
 
     std::mt19937 rng(42);
     start_node_ = compute_medoid();
-    std::cout << "  Start node (medoid): " << start_node_ << std::endl;
+    std::cout << "  Global medoid: " << start_node_ << "\n";
 
     std::vector<uint32_t> perm(npts_);
     std::iota(perm.begin(), perm.end(), 0);
@@ -385,42 +397,48 @@ void IVRGIndex::build(const std::string& data_path,
 
     uint32_t gamma_R = (uint32_t)(gamma * R);
 
-    // Two-pass Vamana build (identical to VamanaIndex::build)
-    std::cout << "\n--- Vamana Pass 1 (alpha=1.0) ---" << std::endl;
+    // ── Vamana two-pass build (identical to VamanaIndex::build) ───────────
+    std::cout << "\n--- Vamana Pass 1 (alpha=1.0) ---\n";
     run_build_pass(perm, R, L, 1.0f, gamma_R);
-    std::cout << "  Pass 1 complete." << std::endl;
+    std::cout << "  Pass 1 complete.\n";
 
     std::shuffle(perm.begin(), perm.end(), rng);
-    std::cout << "\n--- Vamana Pass 2 (alpha=" << alpha << ") ---" << std::endl;
+    std::cout << "\n--- Vamana Pass 2 (alpha=" << alpha << ") ---\n";
     run_build_pass(perm, R, L, alpha, gamma_R);
-    std::cout << "  Pass 2 complete." << std::endl;
+    std::cout << "  Pass 2 complete.\n";
 
     size_t total = 0;
     for (uint32_t i = 0; i < npts_; ++i) total += graph_[i].size();
-    std::cout << "  Average out-degree: " << (double)total / npts_ << std::endl;
+    std::cout << "  Avg out-degree: " << (double)total / npts_ << "\n\n";
 
-    // Routing layer (built AFTER Vamana graph is complete)
+    // ── Routing layer ─────────────────────────────────────────────────────
     build_routing_layer(K_clusters, T_iter, kmeans_sample);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  SEARCH
+//  SEARCH  (public)
 // ════════════════════════════════════════════════════════════════════════════
 
 SearchResult IVRGIndex::search(const float* query, uint32_t K, uint32_t L) const {
     if (L < K) L = K;
     Timer t;
 
-    // Routing: O(K_ × dim_) — negligible cost
+    // Step 1: cluster routing — O(K_ * dim_) operations
     auto seeds = route(query, nprobe_);
-    // Medoid is always added inside greedy_search as safety fallback
 
+    // Also always include the global medoid as an extra seed.
+    // This guarantees IVRG ≥ Vamana: if routing picks a bad region,
+    // the global medoid is still there as a fallback.
+    seeds.push_back(start_node_);
+
+    // Step 2: multi-seed greedy beam search
     auto [cands, dist_cmps] = greedy_search(query, L, seeds);
-    double latency = t.elapsed_us();
+
+    double lat = t.elapsed_us();
 
     SearchResult res;
     res.dist_cmps  = dist_cmps;
-    res.latency_us = latency;
+    res.latency_us = lat;
     res.ids.reserve(K);
     for (uint32_t i = 0; i < K && i < cands.size(); ++i)
         res.ids.push_back(cands[i].second);
@@ -434,12 +452,15 @@ SearchResult IVRGIndex::search(const float* query, uint32_t K, uint32_t L) const
 void IVRGIndex::degree_stats(float& mean, float& stddev, float& gini) const {
     std::vector<float> degs(npts_);
     for (uint32_t i = 0; i < npts_; ++i) degs[i] = (float)graph_[i].size();
+
     float s = 0.f;
     for (float d : degs) s += d;
     mean = s / npts_;
+
     float ss = 0.f;
     for (float d : degs) ss += (d - mean) * (d - mean);
     stddev = std::sqrt(ss / npts_);
+
     std::sort(degs.begin(), degs.end());
     float si = 0.f;
     for (uint32_t i = 0; i < npts_; ++i) si += (float)(i + 1) * degs[i];
@@ -454,12 +475,14 @@ void IVRGIndex::save(const std::string& path) const {
     std::ofstream f(path, std::ios::binary);
     if (!f) throw std::runtime_error("Cannot open: " + path);
 
+    // header
     f.write((char*)&npts_,       sizeof(uint32_t));
     f.write((char*)&dim_,        sizeof(uint32_t));
     f.write((char*)&start_node_, sizeof(uint32_t));
     f.write((char*)&K_,          sizeof(uint32_t));
     f.write((char*)&nprobe_,     sizeof(uint32_t));
 
+    // Vamana graph
     for (uint32_t i = 0; i < npts_; ++i) {
         uint32_t deg = (uint32_t)graph_[i].size();
         f.write((char*)&deg, sizeof(uint32_t));
@@ -467,11 +490,12 @@ void IVRGIndex::save(const std::string& path) const {
             f.write((char*)graph_[i].data(), deg * sizeof(uint32_t));
     }
 
+    // Routing layer: K_ centroids (each dim_ floats) + K_ representatives
     for (uint32_t k = 0; k < K_; ++k)
         f.write((char*)centroids_[k].data(), dim_ * sizeof(float));
     f.write((char*)representatives_.data(), K_ * sizeof(uint32_t));
 
-    std::cout << "Index saved to " << path << std::endl;
+    std::cout << "IVRG index saved to " << path << "\n";
 }
 
 void IVRGIndex::load(const std::string& index_path,
@@ -510,9 +534,9 @@ void IVRGIndex::load(const std::string& index_path,
     representatives_.resize(K_);
     f.read((char*)representatives_.data(), K_ * sizeof(uint32_t));
 
-    std::cout << "Index loaded: " << npts_ << " points, dim=" << dim_
-              << ", K=" << K_ << ", nprobe=" << nprobe_
-              << ", start=" << start_node_ << std::endl;
+    std::cout << "IVRG index loaded: n=" << npts_ << " dim=" << dim_
+              << " K=" << K_ << " nprobe=" << nprobe_
+              << " start=" << start_node_ << "\n";
 }
 
 } // namespace ivrg
