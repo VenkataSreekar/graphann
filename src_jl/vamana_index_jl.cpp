@@ -13,6 +13,32 @@
 #include <cstdlib>
 
 // ============================================================================
+// Ultra-Fast Inline SIMD Distance Function (With Hardcoded Fast-Path)
+// ============================================================================
+static inline __attribute__((always_inline)) float inline_compute_l2sq(const float* a, const float* b, uint32_t dim) {
+    float dist = 0.0f;
+    
+    // FAST PATH: The compiler KNOWS it is exactly 32. 
+    // It will automatically unroll this loop into pure AVX hardware instructions.
+    if (dim == 32) {
+        #pragma omp simd reduction(+:dist)
+        for (uint32_t i = 0; i < 32; i++) {
+            float diff = a[i] - b[i];
+            dist += diff * diff;
+        }
+        return dist;
+    }
+
+    // SLOW PATH: Generic loop for any other dimension
+    #pragma omp simd reduction(+:dist)
+    for (uint32_t i = 0; i < dim; i++) {
+        float diff = a[i] - b[i];
+        dist += diff * diff;
+    }
+    return dist;
+}
+
+// ============================================================================
 // Destructor
 // ============================================================================
 
@@ -35,14 +61,14 @@ VamanaIndexJL::greedy_search(const float* query, uint32_t L,
     uint32_t dist_cmps = 0;
     uint32_t wdim = working_dim();
 
-    float start_dist = compute_l2sq(query, get_vector(start_node_), wdim);
+    float start_dist = inline_compute_l2sq(query, get_vector(start_node_), wdim);
     dist_cmps++;
     candidate_set.insert({start_dist, start_node_});
     visited[start_node_] = true;
 
     for (uint32_t s : multi_starts) {
         if (!visited[s]) {
-            float d = compute_l2sq(query, get_vector(s), wdim);
+            float d = inline_compute_l2sq(query, get_vector(s), wdim);
             dist_cmps++;
             candidate_set.insert({d, s});
             visited[s] = true;
@@ -68,7 +94,7 @@ VamanaIndexJL::greedy_search(const float* query, uint32_t L,
         for (uint32_t nbr : neighbors) {
             if (visited[nbr]) continue;
             visited[nbr] = true;
-            float d = compute_l2sq(query, get_vector(nbr), wdim);
+            float d = inline_compute_l2sq(query, get_vector(nbr), wdim);
             dist_cmps++;
             if (candidate_set.size() < L) {
                 candidate_set.insert({d, nbr});
@@ -105,7 +131,7 @@ void VamanaIndexJL::robust_prune(uint32_t node, std::vector<Candidate>& candidat
         if (new_neighbors.size() >= R) break;
         bool keep = true;
         for (uint32_t sel : new_neighbors) {
-            float d = compute_l2sq(get_vector(cand_id), get_vector(sel), wdim);
+            float d = inline_compute_l2sq(get_vector(cand_id), get_vector(sel), wdim);
             if (dist_to_node > alpha * d) { keep = false; break; }
         }
         if (keep) new_neighbors.push_back(cand_id);
@@ -225,7 +251,7 @@ void VamanaIndexJL::run_build_pass(const std::vector<uint32_t>& perm,
         {
             std::lock_guard<std::mutex> lock(locks_[point]);
             for (uint32_t nbr : graph_[point]) {
-                float d = compute_l2sq(get_vector(point), get_vector(nbr), wdim);
+                float d = inline_compute_l2sq(get_vector(point), get_vector(nbr), wdim);
                 candidates.push_back({d, nbr});
             }
         }
@@ -250,7 +276,7 @@ void VamanaIndexJL::run_build_pass(const std::vector<uint32_t>& perm,
                 {
                     std::lock_guard<std::mutex> lock(locks_[nbr]);
                     for (uint32_t nn : graph_[nbr]) {
-                        float d = compute_l2sq(get_vector(nbr), get_vector(nn), wdim);
+                        float d = inline_compute_l2sq(get_vector(nbr), get_vector(nn), wdim);
                         nbr_cands.push_back({d, nn});
                     }
                 }
@@ -266,7 +292,7 @@ void VamanaIndexJL::run_build_pass(const std::vector<uint32_t>& perm,
 }
 
 // ============================================================================
-// Search
+// Search (Now with Two-Stage Re-ranking AND Memory Prefetching)
 // ============================================================================
 
 SearchResult VamanaIndexJL::search(const float* query, uint32_t K, uint32_t L) const {
@@ -285,15 +311,59 @@ SearchResult VamanaIndexJL::search(const float* query, uint32_t K, uint32_t L) c
     for (int i = 0; i < 3; i++)
         if (npts_ > 0) ensemble_starts.push_back(std::rand() % npts_);
 
+    // STAGE 1: Get L candidates using reduced dimensions (Fast)
     auto [candidates, dist_cmps] = greedy_search(q_ptr, L, ensemble_starts);
+
+    // ========================================================================
+    // STAGE 1.5: Memory Prefetching Pass
+    // Tell the CPU hardware to asynchronously fetch these specific 
+    // full-dimensional vectors from slow RAM into the fast L1/L2 cache NOW.
+    // ========================================================================
+    if (proj_active_) {
+        for (const auto& cand : candidates) {
+            const float* original_vector = data_ + (size_t)cand.second * dim_;
+            // 0 = read-only, 1 = low temporal locality (we only read it once)
+            __builtin_prefetch(original_vector, 0, 1); 
+        }
+    }
+
+    // STAGE 2: Re-ranking using original dimensions (Accurate)
+    std::vector<Candidate> reranked_candidates;
+    reranked_candidates.reserve(candidates.size());
+
+    for (const auto& cand : candidates) {
+        uint32_t id = cand.second;
+        
+        // If projection is active, we fetch the original un-projected vector.
+        // Because of the prefetch loop above, this memory is now instantly 
+        // available in the cache.
+        float exact_dist = 0.0f;
+        if (proj_active_) {
+            const float* original_vector = data_ + (size_t)id * dim_;
+            exact_dist = inline_compute_l2sq(query, original_vector, dim_);
+            dist_cmps++; // Optional: track these extra exact distance computations
+        } else {
+            exact_dist = cand.first; // If no projection, distance is already exact
+        }
+        
+        reranked_candidates.push_back({exact_dist, id});
+    }
+
+    // Sort candidates again based on the EXACT distances
+    std::sort(reranked_candidates.begin(), reranked_candidates.end());
+
     double latency = t.elapsed_us();
 
+    // Final Truncation: Return the true top K
     SearchResult result;
     result.dist_cmps = dist_cmps;
     result.latency_us = latency;
     result.ids.reserve(K);
-    for (uint32_t i = 0; i < K && i < candidates.size(); i++)
-        result.ids.push_back(candidates[i].second);
+    
+    for (uint32_t i = 0; i < K && i < reranked_candidates.size(); i++) {
+        result.ids.push_back(reranked_candidates[i].second);
+    }
+    
     return result;
 }
 
