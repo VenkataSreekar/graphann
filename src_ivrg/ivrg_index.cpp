@@ -10,6 +10,7 @@
 #include <set>
 #include <stdexcept>
 #include <cmath>
+#include <cstring>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -160,38 +161,53 @@ std::pair<std::vector<IVRGIndex::Candidate>, uint32_t>
 IVRGIndex::greedy_search(const float* query, uint32_t L,
                           const std::vector<uint32_t>& seeds) const
 {
-    // --- Timestamp visited tagging optimization ---
-    static thread_local std::vector<uint32_t> visited_tags;
+    // --- SAFE PERSISTENT SCRATCH BUFFER ---
+    // Using raw pointers avoids the thread_local destructor crash on Windows.
+    static thread_local uint32_t* visited_tags = nullptr;
+    static thread_local uint32_t tags_size = 0;
     static thread_local uint32_t current_query_id = 0;
 
-    if (visited_tags.size() != npts_) {
-        visited_tags.assign(npts_, 0);
+    // Allocate or resize only when necessary
+    if (visited_tags == nullptr || tags_size != npts_) {
+        if (visited_tags) std::free(visited_tags);
+        // Use calloc to initialize with zeros
+        visited_tags = (uint32_t*)std::calloc(npts_, sizeof(uint32_t));
+        tags_size = npts_;
         current_query_id = 0;
     }
+
     current_query_id++;
+    // Handle 32-bit wrap-around (after 4 billion queries)
     if (current_query_id == 0) {
-        std::fill(visited_tags.begin(), visited_tags.end(), 0);
+        memset(visited_tags, 0, npts_ * sizeof(uint32_t));
         current_query_id = 1;
     }
 
     auto is_visited = [&](uint32_t id) { return visited_tags[id] == current_query_id; };
     auto set_visited = [&](uint32_t id) { visited_tags[id] = current_query_id; };
-    // ----------------------------------------------
+    // --------------------------------------
 
     uint32_t dist_cmps = 0;
     std::set<Candidate> candidate_set;
 
+    // Initialise with all provided seeds (from the routing layer)
     for (uint32_t seed : seeds) {
         if (is_visited(seed)) continue;
         set_visited(seed);
-        float d = compute_l2sq(query, get_vec(seed), dim_); dist_cmps++;
+        float d = compute_l2sq(query, get_vec(seed), dim_); 
+        dist_cmps++;
         candidate_set.insert({d, seed});
     }
+
+    // Always include medoid as a safety fallback if not already visited
     if (!is_visited(start_node_)) {
         set_visited(start_node_);
-        float d = compute_l2sq(query, get_vec(start_node_), dim_); dist_cmps++;
+        float d = compute_l2sq(query, get_vec(start_node_), dim_); 
+        dist_cmps++;
         candidate_set.insert({d, start_node_});
     }
+
+    // Trim to L if seeds overfill the beam width
     while (candidate_set.size() > L)
         candidate_set.erase(std::prev(candidate_set.end()));
 
@@ -201,6 +217,7 @@ IVRGIndex::greedy_search(const float* query, uint32_t L,
         uint32_t best = UINT32_MAX;
         for (auto& [d, id] : candidate_set)
             if (!expanded.count(id)) { best = id; break; }
+        
         if (best == UINT32_MAX) break;
         expanded.insert(best);
 
@@ -213,7 +230,10 @@ IVRGIndex::greedy_search(const float* query, uint32_t L,
         for (uint32_t nb : nbrs) {
             if (is_visited(nb)) continue;
             set_visited(nb);
-            float d = compute_l2sq(query, get_vec(nb), dim_); dist_cmps++;
+
+            float d = compute_l2sq(query, get_vec(nb), dim_); 
+            dist_cmps++;
+
             if (candidate_set.size() < L) {
                 candidate_set.insert({d, nb});
             } else {

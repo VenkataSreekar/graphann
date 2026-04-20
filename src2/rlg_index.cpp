@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <cstdlib>
 #include <cmath>
+#include <cstring>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -42,14 +43,39 @@ int RLGIndex::dist_to_shell(float d, float r_base) const {
 std::pair<std::vector<RLGIndex::Candidate>, uint32_t>
 RLGIndex::greedy_search(const float* query, uint32_t L) const
 {
+    // --- SAFE PERSISTENT SCRATCH BUFFER ---
+    // Using raw pointers avoids the thread_local destructor crash on Windows.
+    static thread_local uint32_t* visited_tags = nullptr;
+    static thread_local uint32_t tags_size = 0;
+    static thread_local uint32_t current_query_id = 0;
+
+    // Allocate or resize only when necessary
+    if (visited_tags == nullptr || tags_size != npts_) {
+        if (visited_tags) std::free(visited_tags);
+        // Use calloc to initialize with zeros
+        visited_tags = (uint32_t*)std::calloc(npts_, sizeof(uint32_t));
+        tags_size = npts_;
+        current_query_id = 0;
+    }
+
+    current_query_id++;
+    // Handle 32-bit wrap-around (after 4 billion queries)
+    if (current_query_id == 0) {
+        memset(visited_tags, 0, npts_ * sizeof(uint32_t));
+        current_query_id = 1;
+    }
+
+    auto is_visited = [&](uint32_t id) { return visited_tags[id] == current_query_id; };
+    auto set_visited = [&](uint32_t id) { visited_tags[id] = current_query_id; };
+    // --------------------------------------
+
     uint32_t dist_cmps = 0;
     std::set<Candidate> candidate_set;
-    std::vector<bool>   visited(npts_, false);
 
     float d0 = compute_l2sq(query, get_vec(start_node_), dim_);
     dist_cmps++;
     candidate_set.insert({d0, start_node_});
-    visited[start_node_] = true;
+    set_visited(start_node_);
 
     std::set<uint32_t> expanded;
 
@@ -71,8 +97,8 @@ RLGIndex::greedy_search(const float* query, uint32_t L) const
         }
 
         for (uint32_t nb : nbrs) {
-            if (visited[nb]) continue;
-            visited[nb] = true;
+            if (is_visited(nb)) continue;
+            set_visited(nb);
 
             float d = compute_l2sq(query, get_vec(nb), dim_);
             dist_cmps++;

@@ -20,7 +20,16 @@ struct SearchResult {
 class IVRGIndex {
 public:
     IVRGIndex()  = default;
-    ~IVRGIndex() { if (owns_data_ && data_) { std::free(data_); data_ = nullptr; } }
+    ~IVRGIndex() { 
+        if (owns_data_ && data_) { 
+#ifdef _WIN32
+            _aligned_free(data_);
+#else
+            std::free(data_);
+#endif
+            data_ = nullptr; 
+        } 
+    }
 
     // ── Build ────────────────────────────────────────────────────────────────
     void build(const std::string& data_path,

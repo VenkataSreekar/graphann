@@ -11,6 +11,7 @@
 #include <set>
 #include <stdexcept>
 #include <cstdlib>
+#include <cstring>
 
 // ============================================================================
 // Ultra-Fast Inline SIMD Distance Function (With Hardcoded Fast-Path)
@@ -44,7 +45,11 @@ static inline __attribute__((always_inline)) float inline_compute_l2sq(const flo
 
 VamanaIndexJL::~VamanaIndexJL() {
     if (owns_data_ && data_) {
+#ifdef _WIN32
+        _aligned_free(data_);
+#else
         std::free(data_);
+#endif
         data_ = nullptr;
     }
 }
@@ -56,22 +61,47 @@ VamanaIndexJL::~VamanaIndexJL() {
 std::pair<std::vector<VamanaIndexJL::Candidate>, uint32_t>
 VamanaIndexJL::greedy_search(const float* query, uint32_t L,
                               const std::vector<uint32_t>& multi_starts) const {
+    // --- SAFE PERSISTENT SCRATCH BUFFER ---
+    // Using raw pointers avoids the thread_local destructor crash on Windows.
+    static thread_local uint32_t* visited_tags = nullptr;
+    static thread_local uint32_t tags_size = 0;
+    static thread_local uint32_t current_query_id = 0;
+
+    // Allocate or resize only when necessary
+    if (visited_tags == nullptr || tags_size != npts_) {
+        if (visited_tags) std::free(visited_tags);
+        // Use calloc to initialize with zeros
+        visited_tags = (uint32_t*)std::calloc(npts_, sizeof(uint32_t));
+        tags_size = npts_;
+        current_query_id = 0;
+    }
+
+    current_query_id++;
+    // Handle 32-bit wrap-around (after 4 billion queries)
+    if (current_query_id == 0) {
+        memset(visited_tags, 0, npts_ * sizeof(uint32_t));
+        current_query_id = 1;
+    }
+
+    auto is_visited = [&](uint32_t id) { return visited_tags[id] == current_query_id; };
+    auto set_visited = [&](uint32_t id) { visited_tags[id] = current_query_id; };
+    // --------------------------------------
+
     std::set<Candidate> candidate_set;
-    std::vector<bool> visited(npts_, false);
     uint32_t dist_cmps = 0;
     uint32_t wdim = working_dim();
 
     float start_dist = inline_compute_l2sq(query, get_vector(start_node_), wdim);
     dist_cmps++;
     candidate_set.insert({start_dist, start_node_});
-    visited[start_node_] = true;
+    set_visited(start_node_);
 
     for (uint32_t s : multi_starts) {
-        if (!visited[s]) {
+        if (!is_visited(s)) {
             float d = inline_compute_l2sq(query, get_vector(s), wdim);
             dist_cmps++;
             candidate_set.insert({d, s});
-            visited[s] = true;
+            set_visited(s);
         }
     }
     while (candidate_set.size() > L)
@@ -92,8 +122,8 @@ VamanaIndexJL::greedy_search(const float* query, uint32_t L,
             neighbors = graph_[best_node];
         }
         for (uint32_t nbr : neighbors) {
-            if (visited[nbr]) continue;
-            visited[nbr] = true;
+            if (is_visited(nbr)) continue;
+            set_visited(nbr);
             float d = inline_compute_l2sq(query, get_vector(nbr), wdim);
             dist_cmps++;
             if (candidate_set.size() < L) {

@@ -11,6 +11,7 @@
 #include <set>
 #include <stdexcept>
 #include <cstdlib>
+#include <cstring>
 
 // ============================================================================
 // Destructor
@@ -18,7 +19,11 @@
 
 VamanaIndex::~VamanaIndex() {
     if (owns_data_ && data_) {
+#ifdef _WIN32
+        _aligned_free(data_);
+#else
         std::free(data_);
+#endif
         data_ = nullptr;
     }
 }
@@ -29,48 +34,48 @@ VamanaIndex::~VamanaIndex() {
 std::pair<std::vector<VamanaIndex::Candidate>, uint32_t>
 VamanaIndex::greedy_search(const float* query, uint32_t L, const std::vector<uint32_t>& multi_starts) const {
     
-    // --- 1. PERSISTENT SCRATCH BUFFER (The Optimization) ---
-    // These variables live for the lifetime of the thread and are reused.
-    // They are NEVER reallocated or zeroed out between queries.
-    static thread_local std::vector<uint32_t> visited_tags;
+    // --- SAFE PERSISTENT SCRATCH BUFFER ---
+    // Using raw pointers avoids the thread_local destructor crash on Windows.
+    static thread_local uint32_t* visited_tags = nullptr;
+    static thread_local uint32_t tags_size = 0;
     static thread_local uint32_t current_query_id = 0;
 
-    // Initialize or resize if npts_ changed (e.g., after a new index load)
-    if (visited_tags.size() != npts_) {
-        visited_tags.assign(npts_, 0);
+    // Allocate or resize only when necessary
+    if (visited_tags == nullptr || tags_size != npts_) {
+        if (visited_tags) std::free(visited_tags);
+        // Use calloc to initialize with zeros
+        visited_tags = (uint32_t*)std::calloc(npts_, sizeof(uint32_t));
+        tags_size = npts_;
         current_query_id = 0;
     }
 
-    // Increment ID for this query. This effectively "clears" the visited list in O(1).
     current_query_id++;
-
-    // Emergency Reset: If we somehow run 4 billion queries in one thread, reset the tags.
+    // Handle 32-bit wrap-around (after 4 billion queries)
     if (current_query_id == 0) {
-        std::fill(visited_tags.begin(), visited_tags.end(), 0);
+        memset(visited_tags, 0, npts_ * sizeof(uint32_t));
         current_query_id = 1;
     }
-    // -------------------------------------------------------
+
+    auto is_visited = [&](uint32_t id) { return visited_tags[id] == current_query_id; };
+    auto set_visited = [&](uint32_t id) { visited_tags[id] = current_query_id; };
+    // --------------------------------------
 
     std::set<Candidate> candidate_set;
     uint32_t dist_cmps = 0;
-
-    // HELPER LAMBDAS (for cleaner code)
-    auto is_visited = [&](uint32_t id) { return visited_tags[id] == current_query_id; };
-    auto set_visited = [&](uint32_t id) { visited_tags[id] = current_query_id; };
 
     // 1. Seed with the primary start node (Medoid)
     float start_dist = compute_l2sq(query, get_vector(start_node_), dim_);
     dist_cmps++;
     candidate_set.insert({start_dist, start_node_});
-    set_visited(start_node_); // <--- Modified
+    set_visited(start_node_);
 
     // 2. Inject multi-starts
     for (uint32_t random_start : multi_starts) {
-        if (!is_visited(random_start)) { // <--- Modified
+        if (!is_visited(random_start)) {
             float d = compute_l2sq(query, get_vector(random_start), dim_);
             dist_cmps++;
             candidate_set.insert({d, random_start});
-            set_visited(random_start); // <--- Modified
+            set_visited(random_start);
         }
     }
     
@@ -99,8 +104,8 @@ VamanaIndex::greedy_search(const float* query, uint32_t L, const std::vector<uin
         }
 
         for (uint32_t nbr : neighbors) {
-            if (is_visited(nbr)) continue; // <--- Modified
-            set_visited(nbr);            // <--- Modified
+            if (is_visited(nbr)) continue;
+            set_visited(nbr);
 
             float d = compute_l2sq(query, get_vector(nbr), dim_);
             dist_cmps++;

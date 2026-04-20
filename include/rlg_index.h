@@ -39,7 +39,16 @@ struct SearchResult {
 class RLGIndex {
 public:
     RLGIndex()  = default;
-    ~RLGIndex() { if (owns_data_ && data_) { std::free(data_); data_ = nullptr; } }
+    ~RLGIndex() { 
+        if (owns_data_ && data_) { 
+#ifdef _WIN32
+            _aligned_free(data_);
+#else
+            std::free(data_);
+#endif
+            data_ = nullptr; 
+        } 
+    }
 
     // ── Build ────────────────────────────────────────────────────────────────
     // Same parameters as build_index (R, L, alpha, gamma) + shell multiplier m.
