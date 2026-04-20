@@ -64,3 +64,28 @@ add_executable(search_index_jl src_jl/search_index_jl.cpp)
 
 target_link_libraries(build_index_jl  PRIVATE graphann_jl_lib)
 target_link_libraries(search_index_jl PRIVATE graphann_jl_lib)
+# ─────────────────────────────────────────────────────────────────────────────
+# IVRG patch — append ONLY these lines to the BOTTOM of your CMakeLists.txt.
+# This adds three new targets: ivrg_index (lib), build_ivrg, search_ivrg.
+# Do NOT change anything above — the existing graphann_lib and rlg targets
+# are completely unaffected.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Inverted Voronoi Routing Graph (IVRG) — files live in src3/ ──────────────
+add_library(ivrg_index STATIC
+    src3/ivrg_index.cpp
+)
+target_include_directories(ivrg_index PUBLIC include)
+# Inherits -O3 -march=native -fopenmp from parent project automatically.
+
+add_executable(build_ivrg src3/build_ivrg.cpp)
+target_link_libraries(build_ivrg PRIVATE ivrg_index graphann_lib)
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(build_ivrg PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
+add_executable(search_ivrg src3/search_ivrg.cpp)
+target_link_libraries(search_ivrg PRIVATE ivrg_index graphann_lib)
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(search_ivrg PRIVATE OpenMP::OpenMP_CXX)
+endif()
