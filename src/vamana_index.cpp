@@ -24,50 +24,71 @@ VamanaIndex::~VamanaIndex() {
 }
 
 // ============================================================================
-// Greedy Search (Fixed Beam Width L + Multi-Start)
+// Greedy Search (Optimized with Timestamp Tagging)
 // ============================================================================
 std::pair<std::vector<VamanaIndex::Candidate>, uint32_t>
 VamanaIndex::greedy_search(const float* query, uint32_t L, const std::vector<uint32_t>& multi_starts) const {
+    
+    // --- 1. PERSISTENT SCRATCH BUFFER (The Optimization) ---
+    // These variables live for the lifetime of the thread and are reused.
+    // They are NEVER reallocated or zeroed out between queries.
+    static thread_local std::vector<uint32_t> visited_tags;
+    static thread_local uint32_t current_query_id = 0;
+
+    // Initialize or resize if npts_ changed (e.g., after a new index load)
+    if (visited_tags.size() != npts_) {
+        visited_tags.assign(npts_, 0);
+        current_query_id = 0;
+    }
+
+    // Increment ID for this query. This effectively "clears" the visited list in O(1).
+    current_query_id++;
+
+    // Emergency Reset: If we somehow run 4 billion queries in one thread, reset the tags.
+    if (current_query_id == 0) {
+        std::fill(visited_tags.begin(), visited_tags.end(), 0);
+        current_query_id = 1;
+    }
+    // -------------------------------------------------------
+
     std::set<Candidate> candidate_set;
-    std::vector<bool> visited(npts_, false);
     uint32_t dist_cmps = 0;
+
+    // HELPER LAMBDAS (for cleaner code)
+    auto is_visited = [&](uint32_t id) { return visited_tags[id] == current_query_id; };
+    auto set_visited = [&](uint32_t id) { visited_tags[id] = current_query_id; };
 
     // 1. Seed with the primary start node (Medoid)
     float start_dist = compute_l2sq(query, get_vector(start_node_), dim_);
     dist_cmps++;
     candidate_set.insert({start_dist, start_node_});
-    visited[start_node_] = true;
+    set_visited(start_node_); // <--- Modified
 
-    // 2. --- INJECT MULTI-STARTS (To escape local minima) ---
+    // 2. Inject multi-starts
     for (uint32_t random_start : multi_starts) {
-        if (!visited[random_start]) {
+        if (!is_visited(random_start)) { // <--- Modified
             float d = compute_l2sq(query, get_vector(random_start), dim_);
             dist_cmps++;
             candidate_set.insert({d, random_start});
-            visited[random_start] = true;
+            set_visited(random_start); // <--- Modified
         }
     }
     
-    // Ensure we don't accidentally exceed L right out of the gate
     while (candidate_set.size() > L) {
         candidate_set.erase(std::prev(candidate_set.end()));
     }
-    // -------------------------------------------------------
 
     std::set<uint32_t> expanded;
 
     while (true) {
-        // Find closest candidate that hasn't been expanded yet
         uint32_t best_node = UINT32_MAX;
-
         for (const auto& [dist, id] : candidate_set) {
             if (expanded.find(id) == expanded.end()) {
                 best_node = id;
                 break;
             }
         }
-        if (best_node == UINT32_MAX)
-            break;  // all candidates expanded
+        if (best_node == UINT32_MAX) break;
 
         expanded.insert(best_node);
 
@@ -78,15 +99,12 @@ VamanaIndex::greedy_search(const float* query, uint32_t L, const std::vector<uin
         }
 
         for (uint32_t nbr : neighbors) {
-            if (visited[nbr])
-                continue;
-            visited[nbr] = true;
+            if (is_visited(nbr)) continue; // <--- Modified
+            set_visited(nbr);            // <--- Modified
 
             float d = compute_l2sq(query, get_vector(nbr), dim_);
             dist_cmps++;
 
-            // --- FIXED L TRIMMING ---
-            // Insert if candidate set isn't full or this is closer than worst
             if (candidate_set.size() < L) {
                 candidate_set.insert({d, nbr});
             } else {
@@ -96,11 +114,9 @@ VamanaIndex::greedy_search(const float* query, uint32_t L, const std::vector<uin
                     candidate_set.insert({d, nbr});
                 }
             }
-            // ------------------------
         }
     }
 
-    // Convert to sorted vector
     std::vector<Candidate> results(candidate_set.begin(), candidate_set.end());
     return {results, dist_cmps};
 }
