@@ -101,13 +101,18 @@ public:
     }
 
     // Project a single dim-dimensional vector to k dimensions.
-    // out must point to a buffer of at least k floats.
     void project(const float* in, float* out) const {
         for (uint32_t i = 0; i < k_; i++) {
             const float* row = matrix_.data() + (size_t)i * dim_;
             float dot = 0.0f;
-            for (uint32_t d = 0; d < dim_; d++)
+            
+            // NEW: Force the CPU to use hardware vectorization (AVX2/AVX-512)
+            // This computes multiple floats simultaneously.
+            #pragma omp simd reduction(+:dot)
+            for (uint32_t d = 0; d < dim_; d++) {
                 dot += row[d] * in[d];
+            }
+            
             out[i] = dot * scale_;
         }
     }
