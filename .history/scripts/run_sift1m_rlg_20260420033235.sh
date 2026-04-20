@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Radial Layer Graph benchmark on SIFT1M — RLG-only workflow.
+# Radial Layer Graph benchmark on SIFT1M — mirrors run_sift1m.sh exactly.
 # Usage: ./scripts/run_sift1m_rlg.sh
 #
 # Prerequisites: run ./scripts/run_sift1m.sh once first so that
