@@ -55,34 +55,21 @@ target_link_libraries(search_index_jl PRIVATE graphann_jl_lib)
 # are completely unaffected.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PASTE EVERYTHING BELOW to the BOTTOM of your existing CMakeLists.txt.
-# Do NOT change anything above this block.
-# Files in src/ and src_jl/ are completely unaffected.
-# ─────────────────────────────────────────────────────────────────────────────
-
-# ── RLG  (src2/) ──────────────────────────────────────────────────────────────
-add_library(rlg_index STATIC src2/rlg_index.cpp)
-target_include_directories(rlg_index PUBLIC include)
-if(OpenMP_CXX_FOUND)
-    target_link_libraries(rlg_index PUBLIC OpenMP::OpenMP_CXX)
-endif()
-
-add_executable(build_rlg src2/build_rlg.cpp)
-target_link_libraries(build_rlg PRIVATE rlg_index)
-
-add_executable(search_rlg src2/search_rlg.cpp)
-target_link_libraries(search_rlg PRIVATE rlg_index graphann_lib)
-
-# ── IVRG (src_ivrg/) ──────────────────────────────────────────────────────────
-add_library(ivrg_index STATIC src_ivrg/ivrg_index.cpp)
+# ── Inverted Voronoi Routing Graph (IVRG) — files live in src3/ ──────────────
+add_library(ivrg_index STATIC
+    src3/ivrg_index.cpp
+)
 target_include_directories(ivrg_index PUBLIC include)
+# Inherits -O3 -march=native -fopenmp from parent project automatically.
+
+add_executable(build_ivrg src3/build_ivrg.cpp)
+target_link_libraries(build_ivrg PRIVATE ivrg_index graphann_lib)
 if(OpenMP_CXX_FOUND)
-    target_link_libraries(ivrg_index PUBLIC OpenMP::OpenMP_CXX)
+    target_link_libraries(build_ivrg PRIVATE OpenMP::OpenMP_CXX)
 endif()
 
-add_executable(build_ivrg src_ivrg/build_ivrg.cpp)
-target_link_libraries(build_ivrg PRIVATE ivrg_index graphann_lib)
-
-add_executable(search_ivrg src_ivrg/search_ivrg.cpp)
+add_executable(search_ivrg src3/search_ivrg.cpp)
 target_link_libraries(search_ivrg PRIVATE ivrg_index graphann_lib)
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(search_ivrg PRIVATE OpenMP::OpenMP_CXX)
+endif()
